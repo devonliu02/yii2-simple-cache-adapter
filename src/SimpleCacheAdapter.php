@@ -15,7 +15,7 @@ class SimpleCacheAdapter extends Component implements CacheInterface
     const INVALID_KEY_CHARACTER = '{}()/\@:';
 
     /**
-     * @var Cache the Cache component was used to do real cache thing
+     * @var Cache
      */
     public $cache;
 
@@ -36,12 +36,26 @@ class SimpleCacheAdapter extends Component implements CacheInterface
         return $this->cache;
     }
 
+    /**
+     * Cache::get() return false if the value is not in the cache or expired, but PSR-16 return $default(null)
+     *
+     * @param string $key
+     * @param null $default
+     * @return bool|mixed|null
+     */
     public function get($key, $default = null)
     {
         $this->assertValidKey($key);
 
         $data = $this->getCache()->get($key);
-        return $data !== false ? $data : $default;
+
+        if ($data === false) {
+            return $default;
+        } else if ($data === null) {
+            return false;
+        } else {
+            return $data;
+        }
     }
 
     public function set($key, $value, $ttl = null)
@@ -52,6 +66,13 @@ class SimpleCacheAdapter extends Component implements CacheInterface
             return $this->delete($key);
         }
 
+        if ($value === null) {
+            return $this->delete($key);
+        }
+
+        // case FALSE to null so we can detect that if
+        // the cache miss/expired or it did set the FALSE value into cache
+        $value = $value == false ? null : $value;
         return $this->getCache()->set($key, $value, $duration);
     }
 
@@ -85,20 +106,22 @@ class SimpleCacheAdapter extends Component implements CacheInterface
 
     public function setMultiple($values, $ttl = null)
     {
-        if ($values instanceof \Traversable) {
-            $values = iterator_to_array($values);
-        } else if (! is_array($values)) {
+        if (! $values instanceof \Traversable && ! is_array($values)) {
             throw new InvalidArgumentException(
                 'Invalid keys: ' . var_export($values, true) . '. Keys should be an array or Traversable of strings.'
             );
         }
 
-        array_map([$this, 'assertValidKey'], array_keys($values));
+        $pairs = [];
+        foreach ($values as $key => $value) {
+            $this->assertValidKey($key);
+            $pairs[$key] = $value;
+        }
 
         $res = true;
-        array_map(function ($key, $value) use ($ttl, &$res) {
+        foreach ($pairs as $key => $value) {
             $res = $res && $this->set($key, $value, $ttl);
-        }, array_keys($values), array_values($values));
+        }
 
         return $res;
     }
@@ -106,7 +129,7 @@ class SimpleCacheAdapter extends Component implements CacheInterface
     public function deleteMultiple($keys)
     {
         if ($keys instanceof \Traversable) {
-            $keys = iterator_to_array($keys);
+            $keys = iterator_to_array($keys, false);
         } else if (! is_array($keys)) {
             throw new InvalidArgumentException(
                 'Invalid keys: ' . var_export($keys, true) . '. Keys should be an array or Traversable of strings.'
